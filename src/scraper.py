@@ -47,21 +47,27 @@ class SwedishEmbassyScraper:
                     logger.error("Email credentials not found in environment variables")
                     return
                 
-                receiver_email = os.environ.get("RECEIVER_EMAIL")
-                if not receiver_email:
+                receiver_emails_str = os.environ.get("RECEIVER_EMAIL")
+                if not receiver_emails_str:
                     logger.error("Receiver email not found in environment variables")
                     return
+                
+                # Split email addresses and remove any whitespace
+                receiver_emails = [email.strip() for email in receiver_emails_str.split(",")]
                 subject = "Swedish Embassy Appointments Available!"
                 body = f"Appointments are now available at the Swedish Embassy!\n\nVisit {self.base_url} to book your appointment."
                 
                 msg = MIMEText(body)
                 msg['Subject'] = subject
                 msg['From'] = sender_email
-                msg['To'] = receiver_email
+                msg['To'] = ", ".join(receiver_emails)
                 
                 with smtplib.SMTP(smtp_server, port) as server:
                     server.starttls()
                     server.login(sender_email, sender_password)
+                    # Send to each recipient using BCC to protect privacy
+                    msg['To'] = sender_email  # Set sender as main recipient
+                    msg['Bcc'] = ", ".join(receiver_emails)
                     server.send_message(msg)
                 logger.info("Email notification sent successfully")
             except Exception as e:
