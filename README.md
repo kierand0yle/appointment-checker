@@ -4,7 +4,7 @@ This script checks for available appointments at the Swedish Embassy in London a
 
 ## Features
 
-- Automatically checks for available appointments every 10 minutes
+- Automatically checks for available appointments every 5 minutes
 - Sends email notifications when appointments become available
 - Supports multiple email recipients
 - Runs in the cloud using GitHub Actions
