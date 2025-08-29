@@ -30,13 +30,24 @@ class SwedishEmbassyScraper:
         self.driver = webdriver.Chrome(options=self.chrome_options)
         self.driver.implicitly_wait(10)
 
-    def notify_result(self, appointments_available):
+    def notify_result(self, appointments_available, available_slots):
         # Always print the result
-        if appointments_available:
+        if appointments_available and available_slots:
             print("\n🎉 APPOINTMENTS ARE AVAILABLE! 🎉")
-            print(f"Visit {self.base_url} to book your appointment.")
+            print("Available slots:")
+            # Group slots by date
+            slots_by_date = {}
+            for slot in available_slots:
+                if slot['date'] not in slots_by_date:
+                    slots_by_date[slot['date']] = []
+                slots_by_date[slot['date']].append(slot['time'])
             
-            # Send email notification only when appointments are available
+            # Print slots grouped by date
+            for date, times in slots_by_date.items():
+                print(f"  {date}: {', '.join(sorted(times))}")
+            print(f"\nVisit {self.base_url} to book your appointment.")
+            
+            # Send email notification
             try:
                 smtp_server = "smtp.gmail.com"
                 port = 587
@@ -55,7 +66,12 @@ class SwedishEmbassyScraper:
                 # Split email addresses and remove any whitespace
                 receiver_emails = [email.strip() for email in receiver_emails_str.split(",")]
                 subject = "Swedish Embassy Appointments Available!"
-                body = f"Appointments are now available at the Swedish Embassy!\n\nVisit {self.base_url} to book your appointment."
+                
+                # Create detailed message body
+                body = "Appointments are now available at the Swedish Embassy!\n\nAvailable slots:\n"
+                for date, times in slots_by_date.items():
+                    body += f"\n{date}: {', '.join(sorted(times))}"
+                body += f"\n\nVisit {self.base_url} to book your appointment."
                 
                 msg = MIMEText(body)
                 msg['Subject'] = subject
@@ -133,14 +149,48 @@ class SwedishEmbassyScraper:
 
             # Step 9: Check for no appointments label
             try:
-                no_appointments = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, "//label[contains(text(), 'Inga lediga tider kunde hittas.')]"))
+                # First check if there's a "no appointments" message
+                try:
+                    self.driver.find_element(By.XPATH, "//label[contains(text(), 'Inga lediga tider kunde hittas.')]")
+                    logger.info("No appointments available")
+                    return False, []
+                except NoSuchElementException:
+                    pass
+
+                # Look for the timetable
+                timetable = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.CLASS_NAME, "timetable"))
                 )
-                logger.info("No appointments available")
-                return False
-            except TimeoutException:
-                logger.info("Appointments may be available!")
-                return True
+
+                # Get all available dates and times
+                available_slots = []
+                
+                # Get all date headers
+                headers = self.driver.find_elements(By.XPATH, "//th[@id and contains(@id, '2025-')]")
+                date_ids = {header.get_attribute('id'): header.text.replace('\n', ' ') for header in headers}
+
+                # Find all time slots
+                time_cells = self.driver.find_elements(By.XPATH, "//div[@data-function='timeTableCell']")
+                
+                for cell in time_cells:
+                    date = cell.get_attribute('data-fromdatetime').split()[0]
+                    time = cell.get_attribute('data-fromdatetime').split()[1]
+                    if date in date_ids:
+                        available_slots.append({
+                            'date': date_ids[date],
+                            'time': time[:5]  # Format HH:MM
+                        })
+
+                if available_slots:
+                    logger.info(f"Found {len(available_slots)} available time slots")
+                    return True, available_slots
+                else:
+                    logger.info("No appointments found in timetable")
+                    return False, []
+
+            except Exception as e:
+                logger.error(f"Error checking appointments: {str(e)}")
+                return False, []
 
         except Exception as e:
             logger.error(f"Error during appointment check: {str(e)}")
@@ -150,8 +200,8 @@ class SwedishEmbassyScraper:
                 self.driver.quit()
 
     def run(self):
-        appointments_available = self.check_appointments()
-        self.notify_result(appointments_available)
+        appointments_available, available_slots = self.check_appointments()
+        self.notify_result(appointments_available, available_slots)
 
 if __name__ == "__main__":
     scraper = SwedishEmbassyScraper()
