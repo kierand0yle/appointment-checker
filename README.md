@@ -1,10 +1,10 @@
 # Swedish Embassy Appointment Scraper
 
-This script checks for available appointments at the Swedish Embassy in London and sends email notifications when appointments become available. It runs automatically every 10 minutes using GitHub Actions.
+This script checks for available appointments at the Swedish Embassy in London and sends email notifications when appointments become available. It runs automatically on the first day of each month using GitHub Actions.
 
 ## Features
 
-- Automatically checks for available appointments every 5 minutes
+- Automatically checks for available appointments on the first day of each month
 - Sends email notifications when appointments become available
 - Supports multiple email recipients
 - Runs in the cloud using GitHub Actions
