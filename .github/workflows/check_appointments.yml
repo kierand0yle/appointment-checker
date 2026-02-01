@@ -2,7 +2,7 @@ name: Check Embassy Appointments
 
 on:
   schedule:
-    - cron: '0 0 1 * *'  # Runs at midnight (UTC) on the first day of each month
+    - cron: '0 * * * *'  # Runs at the start of every hour
   workflow_dispatch:  # Allows manual trigger
 
 jobs:
