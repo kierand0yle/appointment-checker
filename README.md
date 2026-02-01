@@ -36,7 +36,7 @@ Note: For Gmail, you'll need to use an App Password instead of your regular pass
    - `SENDER_PASSWORD`: Your Gmail app password
    - `RECEIVER_EMAIL`: Comma-separated list of email addresses to receive notifications
 
-The GitHub Action will automatically run every 10 minutes and check for appointments.
+The GitHub Action will automatically run every hour and check for appointments.
 
 ## Running Locally
 
