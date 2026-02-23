@@ -1,6 +1,8 @@
 import os
+import time
 import logging
 import smtplib
+from datetime import datetime
 from email.mime.text import MIMEText
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -23,15 +25,17 @@ class SwedishEmbassyScraper:
         self.chrome_options.add_argument("--headless")
         self.chrome_options.add_argument("--no-sandbox")
         self.chrome_options.add_argument("--disable-dev-shm-usage")
+        self.chrome_options.add_argument("--disable-gpu")
+        self.chrome_options.add_argument("--window-size=1920,1080")
         self.driver = None
 
     def setup_driver(self):
         logger.info("Setting up Chrome driver...")
         self.driver = webdriver.Chrome(options=self.chrome_options)
         self.driver.implicitly_wait(10)
+        logger.info("Chrome driver ready")
 
     def notify_result(self, appointments_available, available_slots):
-        # Always print the result
         if appointments_available and available_slots:
             print("\n🎉 APPOINTMENTS ARE AVAILABLE! 🎉")
             print("Available slots:")
@@ -42,7 +46,6 @@ class SwedishEmbassyScraper:
                     slots_by_date[slot['date']] = []
                 slots_by_date[slot['date']].append(slot['time'])
             
-            # Print slots grouped by date
             for date, times in slots_by_date.items():
                 print(f"  {date}: {', '.join(sorted(times))}")
             print(f"\nVisit {self.base_url} to book your appointment.")
@@ -63,15 +66,14 @@ class SwedishEmbassyScraper:
                     logger.error("Receiver email not found in environment variables")
                     return
                 
-                # Split email addresses and remove any whitespace
                 receiver_emails = [email.strip() for email in receiver_emails_str.split(",")]
-                subject = "Swedish Embassy Appointments Available!"
+                subject = "🚨 Swedish Embassy Appointments Available!"
                 
-                # Create detailed message body
                 body = "Appointments are now available at the Swedish Embassy!\n\nAvailable slots:\n"
                 for date, times in slots_by_date.items():
                     body += f"\n{date}: {', '.join(sorted(times))}"
-                body += f"\n\nVisit {self.base_url} to book your appointment."
+                body += f"\n\nBook now: {self.base_url}"
+                body += "\n\n⚠️ These slots go fast - book immediately!"
                 
                 msg = MIMEText(body)
                 msg['Subject'] = subject
@@ -81,30 +83,43 @@ class SwedishEmbassyScraper:
                 with smtplib.SMTP(smtp_server, port) as server:
                     server.starttls()
                     server.login(sender_email, sender_password)
-                    # Send to each recipient using BCC to protect privacy
-                    msg['To'] = sender_email  # Set sender as main recipient
-                    msg['Bcc'] = ", ".join(receiver_emails)
                     server.send_message(msg)
-                logger.info("Email notification sent successfully")
+                logger.info(f"Email notification sent to {len(receiver_emails)} recipient(s)")
             except Exception as e:
                 logger.error(f"Failed to send email notification: {str(e)}")
         else:
             print("\n❌ No appointments available at this time.")
 
-    def click_element_safely(self, by, value, description):
+    def click_element_safely(self, by, value, description, wait=10):
         try:
-            element = WebDriverWait(self.driver, 10).until(
+            element = WebDriverWait(self.driver, wait).until(
                 EC.element_to_be_clickable((by, value))
             )
             element.click()
-            logger.info(f"Successfully clicked {description}")
+            logger.info(f"✓ {description}")
+            # Small delay to let page transitions complete
+            time.sleep(1)
             return True
         except TimeoutException:
-            logger.error(f"Timeout waiting for {description}")
+            logger.error(f"✗ Timeout waiting for: {description}")
+            self._save_debug_screenshot(description)
             return False
         except Exception as e:
-            logger.error(f"Error clicking {description}: {str(e)}")
+            logger.error(f"✗ Error clicking {description}: {str(e)}")
+            self._save_debug_screenshot(description)
             return False
+
+    def _save_debug_screenshot(self, context):
+        """Save a screenshot for debugging when something goes wrong."""
+        try:
+            filename = f"/tmp/debug_{context.replace(' ', '_')}.png"
+            self.driver.save_screenshot(filename)
+            logger.info(f"Debug screenshot saved: {filename}")
+            # Also log the current page source snippet for debugging
+            page_text = self.driver.find_element(By.TAG_NAME, "body").text[:500]
+            logger.info(f"Page content: {page_text[:200]}...")
+        except Exception:
+            pass
 
     def check_appointments(self):
         try:
@@ -114,93 +129,124 @@ class SwedishEmbassyScraper:
             # Navigate to the base URL
             self.driver.get(self.base_url)
             logger.info("Loaded base URL")
+            time.sleep(2)  # Wait for initial page load
 
             # Step 1: Click "Boka ny tid"
             if not self.click_element_safely(By.CSS_SELECTOR, "input[title='Boka ny tid']", "Boka ny tid button"):
-                return False
+                return False, []
 
             # Step 2: Check "AcceptInformationStorage"
             if not self.click_element_safely(By.ID, "AcceptInformationStorage", "Accept Information Storage checkbox"):
-                return False
+                return False, []
 
             # Step 3: Click "Nästa"
             if not self.click_element_safely(By.CSS_SELECTOR, "input[value='Nästa']", "First Nästa button"):
-                return False
+                return False, []
 
             # Step 4: Click service category radio button
             if not self.click_element_safely(By.ID, "ServiceCategoryCustomers_0__ServiceCategoryId", "Service Category radio"):
-                return False
+                return False, []
 
             # Step 5: Click "Nästa" again
             if not self.click_element_safely(By.CSS_SELECTOR, "input[value='Nästa']", "Second Nästa button"):
-                return False
+                return False, []
 
             # Step 6: Click conditional agreement checkbox
             if not self.click_element_safely(By.ID, "RequiresConditionalAgreement", "Conditional Agreement checkbox"):
-                return False
+                return False, []
 
             # Step 7: Click "Nästa" again
             if not self.click_element_safely(By.CSS_SELECTOR, "input[value='Nästa']", "Third Nästa button"):
-                return False
+                return False, []
 
             # Step 8: Click time search button
-            if not self.click_element_safely(By.NAME, "TimeSearchFirstAvailableButton", "Time Search button"):
-                return False
+            if not self.click_element_safely(By.NAME, "TimeSearchFirstAvailableButton", "Time Search button", wait=15):
+                return False, []
 
-            # Step 9: Check for no appointments label
+            # Step 9: Wait for results to load
+            logger.info("Waiting for appointment results...")
+            time.sleep(3)
+
+            # Step 10: Check for results
             try:
                 # First check if there's a "no appointments" message
                 try:
-                    self.driver.find_element(By.XPATH, "//label[contains(text(), 'Inga lediga tider kunde hittas.')]")
-                    logger.info("No appointments available")
-                    return False, []
+                    no_appt = self.driver.find_element(By.XPATH, "//label[contains(text(), 'Inga lediga tider kunde hittas.')]")
+                    if no_appt:
+                        logger.info("No appointments available (system confirmed)")
+                        return False, []
                 except NoSuchElementException:
-                    pass
+                    logger.info("No 'no appointments' message found - checking for available slots...")
 
                 # Look for the timetable
-                timetable = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "timetable"))
-                )
+                try:
+                    timetable = WebDriverWait(self.driver, 15).until(
+                        EC.presence_of_element_located((By.CLASS_NAME, "timetable"))
+                    )
+                    logger.info("Timetable found!")
+                except TimeoutException:
+                    logger.warning("No timetable found - page may have changed")
+                    self._save_debug_screenshot("no_timetable")
+                    return False, []
 
                 # Get all available dates and times
+                # Use dynamic year matching instead of hardcoded year
+                current_year = str(datetime.now().year)
                 available_slots = []
                 
-                # Get all date headers
-                headers = self.driver.find_elements(By.XPATH, "//th[@id and contains(@id, '2025-')]")
+                # Get all date headers - match any year pattern (YYYY-)
+                headers = self.driver.find_elements(By.XPATH, "//th[@id and (contains(@id, '2025-') or contains(@id, '2026-') or contains(@id, '2027-'))]")
+                if not headers:
+                    # Fallback: try matching any th with a date-like id
+                    headers = self.driver.find_elements(By.XPATH, f"//th[@id and contains(@id, '{current_year}-')]")
+                
                 date_ids = {header.get_attribute('id'): header.text.replace('\n', ' ') for header in headers}
+                logger.info(f"Found {len(date_ids)} date column(s): {list(date_ids.values())}")
 
                 # Find all time slots
                 time_cells = self.driver.find_elements(By.XPATH, "//div[@data-function='timeTableCell']")
+                logger.info(f"Found {len(time_cells)} time slot(s)")
                 
                 for cell in time_cells:
-                    date = cell.get_attribute('data-fromdatetime').split()[0]
-                    time = cell.get_attribute('data-fromdatetime').split()[1]
-                    if date in date_ids:
+                    from_dt = cell.get_attribute('data-fromdatetime')
+                    if from_dt:
+                        date = from_dt.split()[0]
+                        time_str = from_dt.split()[1] if len(from_dt.split()) > 1 else ""
+                        # Match slot to a date column, or add it anyway
+                        date_label = date_ids.get(date, date)
                         available_slots.append({
-                            'date': date_ids[date],
-                            'time': time[:5]  # Format HH:MM
+                            'date': date_label,
+                            'time': time_str[:5]  # Format HH:MM
                         })
 
                 if available_slots:
-                    logger.info(f"Found {len(available_slots)} available time slots")
+                    logger.info(f"🎉 Found {len(available_slots)} available time slot(s)!")
                     return True, available_slots
                 else:
-                    logger.info("No appointments found in timetable")
+                    logger.info("Timetable present but no clickable slots found")
                     return False, []
 
             except Exception as e:
-                logger.error(f"Error checking appointments: {str(e)}")
+                logger.error(f"Error checking appointment results: {str(e)}")
+                self._save_debug_screenshot("error_checking_results")
                 return False, []
 
         except Exception as e:
             logger.error(f"Error during appointment check: {str(e)}")
-            return False
+            return False, []
         finally:
             if self.driver:
                 self.driver.quit()
+                logger.info("Browser closed")
 
     def run(self):
-        appointments_available, available_slots = self.check_appointments()
+        result = self.check_appointments()
+        # Handle both tuple and bare return values safely
+        if isinstance(result, tuple):
+            appointments_available, available_slots = result
+        else:
+            appointments_available = result
+            available_slots = []
         self.notify_result(appointments_available, available_slots)
 
 if __name__ == "__main__":
